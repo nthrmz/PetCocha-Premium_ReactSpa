@@ -16,7 +16,7 @@ npm ci
 npm run dev
 ```
 
-Vite muestra la dirección local, normalmente `http://localhost:5173/`. En desarrollo, los assets se sirven desde la raíz. La compilación usa la base `/PetCocha-Premium_ReactSpa/` para GitHub Pages.
+Vite muestra la dirección local, normalmente `http://localhost:5173/PetCocha-Premium_ReactSpa/`. La base `/PetCocha-Premium_ReactSpa/` se usa tanto en desarrollo como en producción.
 
 ## Comprobaciones y compilación
 
@@ -55,11 +55,10 @@ Productos también acepta filtros en la URL, por ejemplo `/#/productos?categoria
 
 ## GitHub Pages
 
-El workflow `.github/workflows/deploy.yml` compila y publica `main` mediante GitHub Actions al subir cambios o al ejecutarlo manualmente. También configura GitHub Pages con `actions/configure-pages`. El sitio se servirá bajo `https://nthrmz.github.io/PetCocha-Premium_ReactSpa/`.
+El workflow `.github/workflows/deploy.yml` instala dependencias, ejecuta lint y build, verifica que `dist/index.html` apunte a los bundles compilados y publica únicamente `dist` mediante GitHub Actions al subir cambios a `main` o al ejecutarlo manualmente. El sitio se sirve bajo `https://nthrmz.github.io/PetCocha-Premium_ReactSpa/`.
 
-Para publicar:
+En GitHub, configura **Settings → Pages → Build and deployment → Source → GitHub Actions**. Si Pages está configurado para publicar desde `main` (raíz o `/docs`), servirá el `index.html` fuente de Vite en lugar de `dist`.
 
-1. Sube cambios a `main` o ejecuta manualmente **Deploy to GitHub Pages** desde Actions.
-2. Comprueba el resultado del workflow antes de compartir el sitio.
+Después, sube cambios a `main` o ejecuta manualmente **Deploy to GitHub Pages** desde Actions y comprueba que el workflow finalice correctamente antes de compartir el sitio.
 
 No se requieren secretos de publicación configurados manualmente: el workflow usa el token de GitHub Actions con permisos de Pages.
