@@ -55,12 +55,11 @@ Productos también acepta filtros en la URL, por ejemplo `/#/productos?categoria
 
 ## GitHub Pages
 
-El workflow `.github/workflows/deploy.yml` compila y publica mediante GitHub Actions cuando se ejecuta manualmente. No se activa al subir cambios, para que la publicación no ocurra hasta que se solicite. En la configuración del repositorio, selecciona **Settings → Pages → Build and deployment → GitHub Actions**. El sitio se servirá bajo `https://nthrmz.github.io/PetCocha-Premium_ReactSpa/`.
+El workflow `.github/workflows/deploy.yml` compila y publica `main` mediante GitHub Actions al subir cambios o al ejecutarlo manualmente. También configura GitHub Pages con `actions/configure-pages`. El sitio se servirá bajo `https://nthrmz.github.io/PetCocha-Premium_ReactSpa/`.
 
 Para publicar:
 
-1. Selecciona GitHub Actions como fuente de Pages.
-2. En la pestaña Actions, ejecuta manualmente **Deploy to GitHub Pages** con `main`.
-3. Comprueba el resultado del workflow antes de compartir el sitio.
+1. Sube cambios a `main` o ejecuta manualmente **Deploy to GitHub Pages** desde Actions.
+2. Comprueba el resultado del workflow antes de compartir el sitio.
 
 No se requieren secretos de publicación configurados manualmente: el workflow usa el token de GitHub Actions con permisos de Pages.
