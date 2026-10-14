@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from './components/Header.jsx'
 import ProductCatalog from './components/ProductCatalog.jsx'
+import ComparisonBar from './components/ComparisonBar.jsx'
 import { CartDialog, CompareDialog, ConfirmationDialog } from './components/Dialogs.jsx'
+import HeartCursor from './components/HeartCursor.jsx'
+import NotFoundPage from './components/NotFoundPage.jsx'
+import Toast from './components/Toast.jsx'
 import {
   AboutSection,
   CategorySection,
@@ -53,47 +57,6 @@ function readSavedCart() {
     console.error('No se pudo leer el carrito guardado.', error)
     return []
   }
-}
-
-function HeartCursor() {
-  const cursorRef = useRef(null)
-
-  useEffect(() => {
-    const cursor = cursorRef.current
-    const finePointer = window.matchMedia('(pointer:fine)')
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion:reduce)')
-    if (!finePointer.matches || reducedMotion.matches) return undefined
-
-    let x = 0
-    let y = 0
-    let cursorX = 0
-    let cursorY = 0
-    let animationFrame
-    const move = (event) => {
-      x = event.clientX
-      y = event.clientY
-      cursor.style.opacity = '1'
-      cursor.classList.toggle('hover', Boolean(event.target.closest('a,button,input,select,textarea,summary')))
-    }
-    const leave = () => { cursor.style.opacity = '0' }
-    const animate = () => {
-      cursorX += (x - cursorX) * 0.18
-      cursorY += (y - cursorY) * 0.18
-      cursor.style.transform = `translate(${cursorX - 15}px,${cursorY - 15}px)`
-      animationFrame = window.requestAnimationFrame(animate)
-    }
-
-    document.addEventListener('pointermove', move)
-    document.addEventListener('pointerleave', leave)
-    animationFrame = window.requestAnimationFrame(animate)
-    return () => {
-      document.removeEventListener('pointermove', move)
-      document.removeEventListener('pointerleave', leave)
-      window.cancelAnimationFrame(animationFrame)
-    }
-  }, [])
-
-  return <div className="cursor" aria-hidden="true" ref={cursorRef}>♡</div>
 }
 
 function App() {
@@ -377,14 +340,7 @@ function App() {
       <HeartCursor />
       <Header key={location.pathname} cartCount={cartCount} onOpenCart={openCart} currentPath={location.pathname} />
       <main id="contenido" tabIndex={-1}>
-        {pageViews[location.pathname] || (
-          <section className="section not-found">
-            <p className="eyebrow">404 · PÁGINA NO ENCONTRADA</p>
-            <h1>No encontramos este lugar.</h1>
-            <p>Puede que el enlace haya cambiado o que la dirección no sea correcta.</p>
-            <a className="button coral" href="#/inicio">Volver al inicio</a>
-          </section>
-        )}
+        {pageViews[location.pathname] || <NotFoundPage />}
       </main>
       <Footer onOpenCart={openCart} onChooseCategory={chooseCategory} />
       <CartDialog
@@ -410,19 +366,13 @@ function App() {
         onClose={() => confirmationDialogRef.current?.close()}
         onDialogClose={handleConfirmationClose}
       />
-      <div id="compare-bar" className="compare-bar" aria-label="Productos seleccionados para comparar" hidden={comparison.length === 0}>
-        <span id="compare-count" aria-live="polite">{comparison.length} de 3 productos seleccionados</span>
-        <button
-          id="show-comparison"
-          className="button coral"
-          type="button"
-          disabled={comparison.length < 2}
-          onClick={() => {
-            if (comparison.length >= 2 && !compareDialogRef.current?.open) compareDialogRef.current?.showModal()
-          }}
-        >Comparar selección</button>
-        <button id="clear-comparison" className="compare-clear" type="button" onClick={clearComparison}>Limpiar</button>
-      </div>
+      <ComparisonBar
+        count={comparison.length}
+        onOpen={() => {
+          if (comparison.length >= 2 && !compareDialogRef.current?.open) compareDialogRef.current?.showModal()
+        }}
+        onClear={clearComparison}
+      />
       <CompareDialog
         dialogRef={compareDialogRef}
         products={comparedProducts}
@@ -430,7 +380,7 @@ function App() {
         onAdd={addToCart}
         onClose={() => compareDialogRef.current?.close()}
       />
-      <div id="toast" role="status" className={toast ? 'show' : ''}>{toast}</div>
+      <Toast message={toast} />
     </>
   )
 }
