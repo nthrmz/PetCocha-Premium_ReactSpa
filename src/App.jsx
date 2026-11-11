@@ -16,6 +16,7 @@ import {
   PromoSection,
 } from './components/ContentSections.jsx'
 import { products } from './data/products.js'
+import { getCartRestoreWarning, resolveCartItems, restoreSavedCart } from './lib/cart.js'
 import './petcocha.css'
 
 const CART_STORAGE_KEY = 'petcocha-premium-cart-v1'
@@ -48,27 +49,24 @@ function readProductFilters(location) {
 function readSavedCart() {
   try {
     const saved = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '[]')
-    if (!Array.isArray(saved)) return []
-    return saved
-      .filter((item) => products.some((product) => product.id === item.id)
-        && Number.isInteger(item.qty) && item.qty > 0 && item.qty <= 99)
-      .map(({ id, qty }) => ({ id, qty }))
+    return restoreSavedCart(saved)
   } catch (error) {
     console.error('No se pudo leer el carrito guardado.', error)
-    return []
+    return { cart: [], rejectedProducts: [] }
   }
 }
 
 function App() {
   const [location, setLocation] = useState(readLocation)
-  const [cart, setCart] = useState(readSavedCart)
+  const [savedCart] = useState(readSavedCart)
+  const [cart, setCart] = useState(savedCart.cart)
   const [category, setCategory] = useState(() => readProductFilters(readLocation()).category)
   const [search, setSearch] = useState('')
   const [animal, setAnimal] = useState(() => readProductFilters(readLocation()).animal)
   const [sort, setSort] = useState('default')
   const [limit, setLimit] = useState(12)
   const [comparison, setComparison] = useState([])
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState(() => getCartRestoreWarning(savedCart.rejectedProducts))
   const [guideMessage, setGuideMessage] = useState('La orientación no sustituye la evaluación de un veterinario.')
   const [formReason, setFormReason] = useState('')
   const [formMessage, setFormMessage] = useState('')
@@ -80,10 +78,7 @@ function App() {
   const confirmationDialogRef = useRef(null)
   const toastTimeout = useRef(null)
 
-  const cartItems = useMemo(() => cart.map((entry) => ({
-    ...products.find((product) => product.id === entry.id),
-    qty: entry.qty,
-  })), [cart])
+  const cartItems = useMemo(() => resolveCartItems(cart), [cart])
   const cartCount = useMemo(() => cart.reduce((sum, item) => sum + item.qty, 0), [cart])
   const cartTotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.price * item.qty, 0), [cartItems])
   const comparedProducts = useMemo(
@@ -110,7 +105,12 @@ function App() {
     }
   }, [cart])
 
-  useEffect(() => () => window.clearTimeout(toastTimeout.current), [])
+  useEffect(() => {
+    if (savedCart.rejectedProducts.length) {
+      toastTimeout.current = window.setTimeout(() => setToast(''), 2400)
+    }
+    return () => window.clearTimeout(toastTimeout.current)
+  }, [savedCart])
 
   useEffect(() => {
     const handleHashChange = () => {
