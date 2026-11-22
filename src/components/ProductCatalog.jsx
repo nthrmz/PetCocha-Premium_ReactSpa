@@ -9,12 +9,19 @@ export default function ProductCatalog({
   animal,
   sort,
   limit,
+  catalogStatus,
+  catalogError,
+  cartReady,
+  cartStatus,
+  cartError,
   comparison,
   onCategoryChange,
   onSearchChange,
   onAnimalChange,
   onSortChange,
   onLoadMore,
+  onRetryCatalog,
+  onRetryCart,
   onAdd,
   onToggleCompare,
 }) {
@@ -26,6 +33,20 @@ export default function ProductCatalog({
         <div><p className="eyebrow">CATÁLOGO PETCOCHA</p><h2>Encuentra su próximo favorito</h2></div>
         <span id="results" aria-live="polite">{products.length} productos</span>
       </div>
+      {catalogStatus === 'loading' && <p className="catalog-connection" role="status">Conectando con el catálogo de Supabase…</p>}
+      {catalogStatus === 'success' && <p className="catalog-connection" role="status">Conexión a Supabase exitosa · catálogo actualizado.</p>}
+      {catalogStatus === 'error' && (
+        <div className="catalog-error" role="alert">
+          <p>No se pudo conectar con Supabase ni cargar los productos. Detalle: {catalogError}</p>
+          <button className="button outline" type="button" onClick={onRetryCatalog}>Reintentar conexión</button>
+        </div>
+      )}
+      {cartStatus === 'error' && (
+        <div className="catalog-error" role="alert">
+          <p>{cartError}</p>
+          <button className="button outline" type="button" onClick={onRetryCart}>Reintentar carrito</button>
+        </div>
+      )}
       <div className="filters">
         <div id="filter-buttons" role="group" aria-label="Categoría">
           {categories.map((item) => (
@@ -57,13 +78,23 @@ export default function ProductCatalog({
                 <p>Consulta las variantes disponibles.</p>
                 <div className="product-bottom">
                   <strong>{money(product.price)}</strong>
-                  <button className="add" data-add={product.id} type="button" aria-label={`Añadir ${product.name} al carrito`} onClick={() => onAdd(product.id)}>Añadir +</button>
+                  <button className="add" data-add={product.id} type="button" aria-label={`Añadir ${product.name} al carrito`} disabled={!cartReady || cartStatus === 'saving'} onClick={() => onAdd(product.id)}>Añadir +</button>
                 </div>
                 <button className="compare-toggle" data-compare={product.id} type="button" aria-pressed={selected} onClick={() => onToggleCompare(product.id)}>{selected ? '✓ Seleccionado' : '⇄ Comparar'}</button>
               </div>
             </article>
           )
-        }) : <p className="empty">No encontramos productos con estos filtros. Prueba otra búsqueda.</p>}
+        }) : (
+          <p className="empty">
+            {catalogStatus === 'loading'
+              ? 'Cargando productos desde Supabase…'
+              : catalogStatus === 'error'
+                ? 'El catálogo no está disponible porque falló la consulta a Supabase.'
+                : products.length === 0
+                  ? 'La conexión a Supabase funciona, pero el catálogo todavía no tiene productos.'
+                  : 'No encontramos productos con estos filtros. Prueba otra búsqueda.'}
+          </p>
+        )}
       </div>
       {products.length > limit && <button id="load-more" className="button outline" type="button" onClick={onLoadMore}>Ver más productos</button>}
     </section>

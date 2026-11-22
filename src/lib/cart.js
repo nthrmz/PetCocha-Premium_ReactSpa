@@ -25,6 +25,10 @@ export function restoreSavedCart(saved, catalog = products) {
   return { cart, rejectedProducts }
 }
 
+export function shouldImportLegacyCart({ remoteCartExists, remoteItemCount, pendingImport }) {
+  return remoteItemCount === 0 && (!remoteCartExists || pendingImport)
+}
+
 export function resolveCartItems(cart, catalog = products) {
   return cart
     .map((item) => {

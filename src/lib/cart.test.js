@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { products } from '../data/products.js'
-import { getCartRestoreWarning, resolveCartItems, restoreSavedCart } from './cart.js'
+import {
+  getCartRestoreWarning,
+  resolveCartItems,
+  restoreSavedCart,
+  shouldImportLegacyCart,
+} from './cart.js'
 
 const productA = products[0]
 const productB = products[1]
@@ -32,4 +37,22 @@ test('rechaza todas las líneas cuyo total excede 99 y conserva los otros produc
     `Se rechazó ${productA.name} (ID ${productA.id}): el límite es de 99 unidades por producto.`,
   )
   assert.deepEqual(resolveCartItems(restored.cart), [{ ...productB, qty: 1 }])
+})
+
+test('no reemplaza un carrito remoto existente con datos locales obsoletos', () => {
+  assert.equal(shouldImportLegacyCart({
+    remoteCartExists: true,
+    remoteItemCount: 0,
+    pendingImport: false,
+  }), false)
+  assert.equal(shouldImportLegacyCart({
+    remoteCartExists: true,
+    remoteItemCount: 0,
+    pendingImport: true,
+  }), true)
+  assert.equal(shouldImportLegacyCart({
+    remoteCartExists: true,
+    remoteItemCount: 1,
+    pendingImport: true,
+  }), false)
 })

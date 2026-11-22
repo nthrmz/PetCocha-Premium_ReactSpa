@@ -15,12 +15,108 @@ import {
   HeroSection,
   PromoSection,
 } from './components/ContentSections.jsx'
-import { products } from './data/products.js'
-import { getCartRestoreWarning, resolveCartItems, restoreSavedCart } from './lib/cart.js'
+import {
+  getCartRestoreWarning,
+  resolveCartItems,
+  restoreSavedCart,
+  shouldImportLegacyCart,
+} from './lib/cart.js'
+import { supabase } from './lib/supabase.js'
 import './petcocha.css'
 
 const CART_STORAGE_KEY = 'petcocha-premium-cart-v1'
+const CART_IMPORT_KEY_PREFIX = `${CART_STORAGE_KEY}:import-pending:`
+const CART_ITEM_SELECT = 'product_id, quantity, product:products!cart_items_product_id_fkey(id, name, category, animal, price, image)'
 const ROUTE_CATEGORIES = ['Todos', 'Alimentos', 'Juguetes', 'Accesorios', 'Higiene']
+const EMPTY_PRODUCTS = []
+let anonymousSignInPromise
+
+async function getAuthenticatedUser() {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+  if (sessionError) throw sessionError
+  if (sessionData.session?.user) return sessionData.session.user
+
+  if (!anonymousSignInPromise) {
+    anonymousSignInPromise = supabase.auth.signInAnonymously()
+  }
+  const signInPromise = anonymousSignInPromise
+  try {
+    const { data, error } = await signInPromise
+    if (error) throw error
+    if (!data.user) throw new Error('Supabase Auth no devolvió un usuario para el carrito.')
+    return data.user
+  } finally {
+    if (anonymousSignInPromise === signInPromise) anonymousSignInPromise = null
+  }
+}
+
+function cartImportKey(userId) {
+  return `${CART_IMPORT_KEY_PREFIX}${userId}`
+}
+
+function normalizeCartItem(row) {
+  if (!row.product) {
+    throw new Error(`El producto ${row.product_id} ya no está disponible en el catálogo.`)
+  }
+  return {
+    id: Number(row.product_id),
+    qty: row.quantity,
+    product: {
+      ...row.product,
+      id: Number(row.product.id),
+      price: Number(row.product.price),
+    },
+  }
+}
+
+async function loadCartItems(cartId) {
+  const { data, error } = await supabase
+    .from('cart_items')
+    .select(CART_ITEM_SELECT)
+    .eq('cart_id', cartId)
+    .order('product_id')
+
+  if (error) throw error
+  return data.map(normalizeCartItem)
+}
+
+async function findOrCreateCart(userId, beforeCreate) {
+  const { data: existingCart, error: findError } = await supabase
+    .from('carts')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (findError) throw findError
+  if (existingCart) return { cart: existingCart, created: false }
+
+  beforeCreate()
+  const { data: newCart, error: createError } = await supabase
+    .from('carts')
+    .insert({ user_id: userId })
+    .select('id')
+    .single()
+
+  if (!createError) return { cart: newCart, created: true }
+  if (createError.code !== '23505') throw createError
+
+  const { data: racedCart, error: raceError } = await supabase
+    .from('carts')
+    .select('id')
+    .eq('user_id', userId)
+    .single()
+
+  if (raceError) throw raceError
+  return { cart: racedCart, created: false }
+}
+
+function getCartErrorMessage(error) {
+  const detail = error instanceof Error ? error.message : String(error)
+  if (/anonymous sign-ins? (are )?disabled/i.test(detail)) {
+    return `La sesión anónima está deshabilitada. Actívala en Supabase Dashboard → Authentication → Sign In / Providers → Anonymous Sign-Ins. Detalle: ${detail}`
+  }
+  return `No se pudo sincronizar el carrito con Supabase. Detalle: ${detail || 'Error desconocido.'}`
+}
 
 function readLocation() {
   const hash = window.location.hash
@@ -59,35 +155,67 @@ function readSavedCart() {
 function App() {
   const [location, setLocation] = useState(readLocation)
   const [savedCart] = useState(readSavedCart)
-  const [cart, setCart] = useState(savedCart.cart)
+  const [cart, setCart] = useState([])
+  const [cartRetry, setCartRetry] = useState(0)
+  const [cartResult, setCartResult] = useState(null)
+  const [cartMutationStatus, setCartMutationStatus] = useState('')
+  const [cartMutationError, setCartMutationError] = useState('')
   const [category, setCategory] = useState(() => readProductFilters(readLocation()).category)
   const [search, setSearch] = useState('')
   const [animal, setAnimal] = useState(() => readProductFilters(readLocation()).animal)
   const [sort, setSort] = useState('default')
   const [limit, setLimit] = useState(12)
+  const [catalogRetry, setCatalogRetry] = useState(0)
+  const [catalogResult, setCatalogResult] = useState(null)
   const [comparison, setComparison] = useState([])
   const [toast, setToast] = useState(() => getCartRestoreWarning(savedCart.rejectedProducts))
   const [guideMessage, setGuideMessage] = useState('La orientación no sustituye la evaluación de un veterinario.')
   const [formReason, setFormReason] = useState('')
   const [formMessage, setFormMessage] = useState('')
+  const [contactSubmitting, setContactSubmitting] = useState(false)
+  const [contactSubmitError, setContactSubmitError] = useState('')
   const [request, setRequest] = useState(null)
   const [confirmed, setConfirmed] = useState(false)
-  const [requestCode, setRequestCode] = useState('')
   const cartDialogRef = useRef(null)
   const compareDialogRef = useRef(null)
   const confirmationDialogRef = useRef(null)
   const toastTimeout = useRef(null)
+  const contactSubmittingRef = useRef(false)
+  const cartIdRef = useRef('')
+  const cartRef = useRef([])
+  const cartWriteQueue = useRef(Promise.resolve())
 
-  const cartItems = useMemo(() => resolveCartItems(cart), [cart])
+  const cartRequestKey = String(cartRetry)
+  const currentCartResult = cartResult?.key === cartRequestKey ? cartResult : null
+  const cartId = currentCartResult?.cartId ?? ''
+  const cartReady = Boolean(cartId)
+  const cartStatus = currentCartResult?.status === 'error'
+    ? 'error'
+    : cartMutationStatus || currentCartResult?.status || 'loading'
+  const cartError = currentCartResult?.status === 'error'
+    ? currentCartResult.error
+    : cartMutationError
+  const catalogRequestKey = `${location.pathname}:${catalogRetry}`
+  const currentCatalogResult = catalogResult?.key === catalogRequestKey ? catalogResult : null
+  const catalogProducts = currentCatalogResult ? currentCatalogResult.products : EMPTY_PRODUCTS
+  const catalogError = currentCatalogResult?.error ?? ''
+  const catalogStatus = location.pathname !== '/productos'
+    ? 'idle'
+    : currentCatalogResult?.status ?? 'loading'
+
+  const cartItems = useMemo(
+    () => cart.map(({ id, qty, product }) => ({ ...product, id, qty })),
+    [cart],
+  )
   const cartCount = useMemo(() => cart.reduce((sum, item) => sum + item.qty, 0), [cart])
   const cartTotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.price * item.qty, 0), [cartItems])
   const comparedProducts = useMemo(
-    () => comparison.map((id) => products.find((product) => product.id === id)).filter(Boolean),
-    [comparison],
+    () => comparison.map((id) => catalogProducts.find((product) => product.id === id)).filter(Boolean),
+    [catalogProducts, comparison],
   )
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLocaleLowerCase()
-    const matches = products.filter((product) => (
+    const matches = catalogProducts.filter((product) => (
       (category === 'Todos' || product.category === category)
       && (!animal || product.animal.includes(animal))
       && `${product.name} ${product.category} ${product.animal}`.toLocaleLowerCase().includes(term)
@@ -95,15 +223,7 @@ function App() {
     if (sort === 'low') matches.sort((first, second) => first.price - second.price)
     if (sort === 'high') matches.sort((first, second) => second.price - first.price)
     return matches
-  }, [animal, category, search, sort])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart))
-    } catch (error) {
-      console.error('No se pudo guardar el carrito en este navegador.', error)
-    }
-  }, [cart])
+  }, [animal, catalogProducts, category, search, sort])
 
   useEffect(() => {
     if (savedCart.rejectedProducts.length) {
@@ -111,6 +231,51 @@ function App() {
     }
     return () => window.clearTimeout(toastTimeout.current)
   }, [savedCart])
+
+  useEffect(() => {
+    if (location.pathname !== '/productos') return undefined
+
+    let active = true
+
+    const loadCatalog = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('id, name, category, animal, price, image')
+          .order('id')
+
+        if (error) throw error
+        if (!active) return
+
+        setCatalogResult({
+          key: catalogRequestKey,
+          status: 'success',
+          products: data.map((product) => ({
+            ...product,
+            id: Number(product.id),
+            price: Number(product.price),
+          })),
+          error: '',
+        })
+      } catch (error) {
+        if (!active) return
+        console.error('No se pudo cargar el catálogo desde Supabase.', error)
+        setCatalogResult({
+          key: catalogRequestKey,
+          status: 'error',
+          products: [],
+          error: error instanceof Error && error.message
+            ? error.message
+            : String(error) || 'Error desconocido al consultar Supabase.',
+        })
+      }
+    }
+
+    loadCatalog()
+    return () => {
+      active = false
+    }
+  }, [catalogRequestKey, location.pathname])
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -173,9 +338,134 @@ function App() {
     toastTimeout.current = window.setTimeout(() => setToast(''), 2400)
   }, [])
 
+  useEffect(() => {
+    let active = true
+
+    const loadUserCart = async () => {
+      try {
+        const user = await getAuthenticatedUser()
+
+        const importKey = cartImportKey(user.id)
+        const { cart: remoteCart, created } = await findOrCreateCart(user.id, () => {
+          if (savedCart.cart.length) localStorage.setItem(importKey, 'true')
+        })
+        let remoteItems = await loadCartItems(remoteCart.id)
+        const importPending = localStorage.getItem(importKey) === 'true'
+
+        if (savedCart.cart.length > 0 && shouldImportLegacyCart({
+          remoteCartExists: !created,
+          remoteItemCount: remoteItems.length,
+          pendingImport: importPending,
+        })) {
+          const { error } = await supabase
+            .from('cart_items')
+            .upsert(
+              savedCart.cart.map(({ id, qty }) => ({
+                cart_id: remoteCart.id,
+                product_id: id,
+                quantity: qty,
+              })),
+              { onConflict: 'cart_id,product_id', ignoreDuplicates: true },
+            )
+          if (error) throw error
+          remoteItems = await loadCartItems(remoteCart.id)
+        }
+
+        if (!active) return
+        if (savedCart.cart.length && remoteItems.length && !created && !importPending) {
+          showToast('Se conservó el carrito remoto; el carrito local no se importó para evitar sobrescribirlo.')
+        }
+        cartIdRef.current = remoteCart.id
+        cartRef.current = remoteItems
+        setCart(remoteItems)
+        setCartResult({ key: cartRequestKey, status: 'ready', cartId: remoteCart.id, error: '' })
+        setCartMutationStatus('')
+        setCartMutationError('')
+
+        try {
+          localStorage.removeItem(CART_STORAGE_KEY)
+          localStorage.removeItem(importKey)
+        } catch (error) {
+          console.error('No se pudo limpiar el respaldo local del carrito.', error)
+        }
+      } catch (error) {
+        if (!active) return
+        console.error('No se pudo cargar el carrito desde Supabase.', error)
+        const localItems = resolveCartItems(savedCart.cart).map(({ id, qty, ...product }) => ({
+          id,
+          qty,
+          product,
+        }))
+        cartIdRef.current = ''
+        cartRef.current = localItems
+        setCart(localItems)
+        setCartResult({
+          key: cartRequestKey,
+          status: 'error',
+          cartId: '',
+          error: getCartErrorMessage(error),
+        })
+        showToast('No se pudo conectar el carrito con Supabase. Revisa el aviso en el carrito.')
+      }
+    }
+
+    loadUserCart()
+    return () => {
+      active = false
+    }
+  }, [cartRequestKey, savedCart, showToast])
+
+  const enqueueCartMutation = useCallback((mutate) => {
+    const operation = cartWriteQueue.current.then(async () => {
+      const remoteCartId = cartIdRef.current
+      if (!remoteCartId) throw new Error('El carrito de Supabase todavía no está disponible.')
+
+      setCartMutationStatus('saving')
+      setCartMutationError('')
+      const nextCart = await mutate(cartRef.current, remoteCartId)
+      cartRef.current = nextCart
+      setCart(nextCart)
+      setCartMutationStatus('ready')
+      return true
+    })
+
+    cartWriteQueue.current = operation.catch((error) => {
+      console.error('No se pudo guardar el carrito en Supabase.', error)
+      setCartMutationError(getCartErrorMessage(error))
+      setCartMutationStatus('error')
+      showToast('No se pudo guardar el carrito en Supabase. Revisa el aviso en el carrito.')
+      return false
+    })
+    return cartWriteQueue.current
+  }, [showToast])
+
+  const refreshCart = useCallback(async () => {
+    await cartWriteQueue.current
+    const remoteCartId = cartIdRef.current
+    if (!remoteCartId) return false
+
+    setCartMutationStatus('saving')
+    setCartMutationError('')
+    try {
+      const remoteItems = await loadCartItems(remoteCartId)
+      if (cartIdRef.current !== remoteCartId) return false
+      cartRef.current = remoteItems
+      setCart(remoteItems)
+      setCartMutationStatus('ready')
+      return true
+    } catch (error) {
+      console.error('No se pudo actualizar el carrito desde Supabase.', error)
+      setCartMutationError(getCartErrorMessage(error))
+      setCartMutationStatus('error')
+      showToast('No se pudo actualizar el carrito. Revisa el aviso en el carrito.')
+      return false
+    }
+  }, [showToast])
+
   const openCart = useCallback(() => {
     if (!cartDialogRef.current?.open) cartDialogRef.current?.showModal()
-  }, [])
+    refreshCart()
+  }, [refreshCart])
 
   const navigate = useCallback((destination) => {
     const nextHash = `#${destination}`
@@ -199,20 +489,90 @@ function App() {
   }, [navigate])
 
   const addToCart = useCallback((id) => {
-    setCart((current) => {
+    return enqueueCartMutation(async (current, remoteCartId) => {
       const existing = current.find((item) => item.id === id)
-      if (existing) {
-        return current.map((item) => item.id === id ? { ...item, qty: Math.min(99, item.qty + 1) } : item)
+      if (existing?.qty >= 99) {
+        showToast('El máximo permitido por producto es 99 unidades.')
+        return current
       }
-      return [...current, { id, qty: 1 }]
+
+      const { data, error } = await supabase
+        .from('cart_items')
+        .upsert(
+          { cart_id: remoteCartId, product_id: id, quantity: (existing?.qty || 0) + 1 },
+          { onConflict: 'cart_id,product_id' },
+        )
+        .select(CART_ITEM_SELECT)
+        .single()
+      if (error) throw error
+
+      const savedItem = normalizeCartItem(data)
+      showToast('Producto añadido a tu carrito')
+      return existing
+        ? current.map((item) => item.id === id ? savedItem : item)
+        : [...current, savedItem]
     })
-    showToast('Producto añadido a tu carrito')
-  }, [showToast])
+  }, [enqueueCartMutation, showToast])
 
   const changeQuantity = (id, delta) => {
-    setCart((current) => current
-      .map((item) => item.id === id ? { ...item, qty: Math.min(99, item.qty + delta) } : item)
-      .filter((item) => item.qty > 0))
+    return enqueueCartMutation(async (current, remoteCartId) => {
+      const existing = current.find((item) => item.id === id)
+      if (!existing) return current
+
+      const quantity = Math.min(99, existing.qty + delta)
+      if (quantity === existing.qty) return current
+      if (quantity === 0) {
+        const { error } = await supabase
+          .from('cart_items')
+          .delete()
+          .eq('cart_id', remoteCartId)
+          .eq('product_id', id)
+        if (error) throw error
+        return current.filter((item) => item.id !== id)
+      }
+
+      const { data, error } = await supabase
+        .from('cart_items')
+        .upsert(
+          { cart_id: remoteCartId, product_id: id, quantity },
+          { onConflict: 'cart_id,product_id' },
+        )
+        .select(CART_ITEM_SELECT)
+        .single()
+      if (error) throw error
+      const savedItem = normalizeCartItem(data)
+      return current.map((item) => item.id === id ? savedItem : item)
+    })
+  }
+
+  const removeFromCart = (id) => enqueueCartMutation(async (current, remoteCartId) => {
+    const { error } = await supabase
+      .from('cart_items')
+      .delete()
+      .eq('cart_id', remoteCartId)
+      .eq('product_id', id)
+    if (error) throw error
+    return current.filter((item) => item.id !== id)
+  })
+
+  const clearCart = () => enqueueCartMutation(async (current, remoteCartId) => {
+    if (!current.length) return current
+    const { error } = await supabase
+      .from('cart_items')
+      .delete()
+      .eq('cart_id', remoteCartId)
+    if (error) throw error
+    showToast('Carrito vacío; cambios guardados en Supabase.')
+    return []
+  })
+
+  const retryCart = () => {
+    cartIdRef.current = ''
+    cartRef.current = []
+    setCart([])
+    setCartMutationStatus('')
+    setCartMutationError('')
+    setCartRetry((current) => current + 1)
   }
 
   const toggleComparison = (id) => {
@@ -246,36 +606,71 @@ function App() {
       showToast('Completa tu nombre y una consulta de al menos 10 caracteres.')
       return
     }
-    if (data.reason === 'Realizar pedido' && cartCount === 0) {
-      showToast('Añade un producto al carrito para realizar un pedido.')
-      return
-    }
     setRequest({
-      ...data,
       name: data.name.trim(),
+      phone: data.phone.trim(),
+      email: data.email.trim() || null,
+      reason: data.reason,
       message: data.message.trim(),
+      consent: data.consent === 'on',
       items: cartItems,
       total: cartTotal,
     })
     setConfirmed(false)
-    setRequestCode('')
+    setContactSubmitError('')
     confirmationDialogRef.current?.showModal()
   }
 
-  const prepareRequest = () => {
-    const code = `PC-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
-    setRequestCode(code)
-    setConfirmed(true)
-    if (request?.reason === 'Realizar pedido') setCart([])
-    document.getElementById('contact-form')?.reset()
-    setFormReason('')
-    setFormMessage('')
+  const sendContactRequest = async () => {
+    if (!request || contactSubmittingRef.current) return
+
+    contactSubmittingRef.current = true
+    setContactSubmitting(true)
+    setContactSubmitError('')
+    try {
+      const { error } = await supabase
+        .from('contact_messages')
+        .insert({
+          request_type: request.reason === 'Realizar pedido' ? 'Pedido' : 'Consulta',
+          name: request.name,
+          phone: request.phone,
+          email: request.email,
+          reason: request.reason,
+          message: request.message,
+          consent: request.consent,
+          cart_items: request.items.map((item) => ({
+            product_id: item.id,
+            name: item.name,
+            quantity: item.qty,
+            unit_price: item.price,
+          })),
+          cart_total: request.total,
+        })
+
+      if (error) throw error
+
+      if (request.reason === 'Realizar pedido' && request.items.length > 0 && !await clearCart()) {
+        setContactSubmitError('La solicitud se guardó, pero no se pudo vaciar el carrito. Revisa el estado de sincronización del carrito.')
+      }
+
+      setConfirmed(true)
+      document.getElementById('contact-form')?.reset()
+      setFormReason('')
+      setFormMessage('')
+    } catch (error) {
+      console.error('No se pudo guardar el mensaje de contacto en Supabase.', error)
+      const detail = error instanceof Error && error.message ? error.message : String(error)
+      setContactSubmitError(`No se pudo enviar la solicitud. Tus datos siguen en el formulario para que puedas reintentar. Detalle: ${detail || 'Error desconocido.'}`)
+    } finally {
+      contactSubmittingRef.current = false
+      setContactSubmitting(false)
+    }
   }
 
   const handleConfirmationClose = () => {
     setRequest(null)
     setConfirmed(false)
-    setRequestCode('')
+    setContactSubmitError('')
   }
 
   const clearComparison = () => {
@@ -309,12 +704,19 @@ function App() {
         animal={animal}
         sort={sort}
         limit={limit}
+        catalogStatus={catalogStatus}
+        catalogError={catalogError}
+        cartReady={cartReady}
+        cartStatus={cartStatus}
+        cartError={cartError}
         comparison={comparison}
         onCategoryChange={handleFilterChange(setCategory)}
         onSearchChange={handleSearchChange}
         onAnimalChange={handleFilterChange(setAnimal)}
         onSortChange={handleFilterChange(setSort)}
         onLoadMore={() => setLimit((current) => current + 12)}
+        onRetryCatalog={() => setCatalogRetry((current) => current + 1)}
+        onRetryCart={retryCart}
         onAdd={addToCart}
         onToggleCompare={toggleComparison}
       />
@@ -347,8 +749,13 @@ function App() {
         dialogRef={cartDialogRef}
         items={cartItems}
         total={cartTotal}
+        cartReady={cartReady}
+        cartStatus={cartStatus}
+        cartError={cartError}
+        onRetry={retryCart}
         onChangeQuantity={changeQuantity}
-        onRemove={(id) => setCart((current) => current.filter((item) => item.id !== id))}
+        onRemove={removeFromCart}
+        onClear={clearCart}
         onCheckout={() => {
           cartDialogRef.current?.close()
           setFormReason('Realizar pedido')
@@ -361,8 +768,10 @@ function App() {
         dialogRef={confirmationDialogRef}
         request={request}
         confirmed={confirmed}
-        code={requestCode}
-        onConfirm={prepareRequest}
+        submitting={contactSubmitting}
+        submitError={contactSubmitError}
+        cartError={cartError}
+        onConfirm={sendContactRequest}
         onClose={() => confirmationDialogRef.current?.close()}
         onDialogClose={handleConfirmationClose}
       />
@@ -376,6 +785,7 @@ function App() {
       <CompareDialog
         dialogRef={compareDialogRef}
         products={comparedProducts}
+        cartReady={cartReady}
         onRemove={toggleComparison}
         onAdd={addToCart}
         onClose={() => compareDialogRef.current?.close()}

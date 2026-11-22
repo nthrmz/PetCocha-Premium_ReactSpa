@@ -112,13 +112,13 @@ export function ContactSection({ cartItems, cartTotal, onEditCart, onSubmit, for
       <div>
         <p className="eyebrow">ESTAMOS CERCA</p>
         <h2>Hablemos de<br />tu compañero.</h2>
-        <p>Consulta por un producto o prepara tu pedido. Te mostraremos un resumen para que puedas revisar cada detalle.</p>
+        <p>Consulta por un producto o prepara tu pedido. Revisa cada detalle antes de enviarnos tu solicitud.</p>
         <div className="contact-info">
           <span><strong>Ubicación</strong>Cochabamba, Bolivia</span>
           <span><strong>Horario de atención</strong>Lun–Sáb · 09:00–18:00</span>
         </div>
         <img src={imageUrl('portada de contacto.avif')} alt="Perro mirando hacia arriba" loading="lazy" />
-        <details><summary>¿Cómo funciona el pedido?</summary><p>Añade productos al carrito y completa el formulario para preparar tu solicitud. El resumen queda listo para compartir; no se envía automáticamente.</p></details>
+        <details><summary>¿Cómo funciona el pedido?</summary><p>Añade productos al carrito y completa el formulario. Al confirmar, guardaremos tu solicitud para que podamos revisar disponibilidad; no confirma una compra ni procesa un pago.</p></details>
         <details><summary>¿Los precios son definitivos?</summary><p>Confirma el precio y la disponibilidad antes de finalizar tu compra.</p></details>
       </div>
       <form id="contact-form" className="form-card" onSubmit={onSubmit}>
@@ -139,8 +139,8 @@ export function ContactSection({ cartItems, cartTotal, onEditCart, onSubmit, for
         <label>Motivo<select name="reason" required value={formReason} onChange={(event) => onReasonChange(event.target.value)}><option value="">Seleccionar</option><option>Consulta de producto</option><option>Realizar pedido</option><option>Asesoría de alimento</option></select></label>
         <label>¿Qué necesita tu mascota?<textarea name="message" rows="4" required minLength="10" maxLength="1000" placeholder="Cuéntanos un poco…" value={formMessage} onChange={(event) => onMessageChange(event.target.value)} /></label>
         <label className="consent"><input name="consent" type="checkbox" required />He revisado los datos de mi solicitud y entiendo que debo compartirla para completar el pedido.</label>
-        <button className="button coral">Revisar y confirmar →</button>
-        <p className="demo-note">Tus datos de contacto no se guardan al cerrar la página.</p>
+        <button className="button coral">Revisar y enviar →</button>
+        <p className="demo-note">La solicitud se guarda al enviarla. No confirma una compra ni procesa un pago.</p>
       </form>
     </section>
   )
