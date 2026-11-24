@@ -63,10 +63,10 @@ El workflow `.github/workflows/deploy.yml` instala dependencias, ejecuta lint y 
 
 En GitHub, configura **Settings → Pages → Build and deployment → Source → GitHub Actions**. Si Pages está configurado para publicar desde `main` (raíz o `/docs`), servirá el `index.html` fuente de Vite en lugar de `dist`.
 
-Para que el catálogo, el carrito y los pedidos de la página publicada usen Supabase, agrega el secreto `VITE_SUPABASE_PUBLISHABLE_KEY` en **Settings → Secrets and variables → Actions → New repository secret**. Usa el valor `sb_publishable_...` de `.env.local` o de Supabase Dashboard → **Project Settings → API Keys**. La URL del proyecto ya está configurada en el workflow. No uses ni compartas claves `sb_secret_...` o `service_role`. Después, ejecuta **Actions → Deploy to GitHub Pages → Run workflow** para reconstruir el sitio con la conexión.
+El workflow incluye la clave publishable de Supabase, que está diseñada para usarse en el cliente web; por eso queda visible en el bundle público. Las políticas RLS limitan los accesos de esa clave. Nunca incluyas claves `sb_secret_...`, `service_role` ni tokens administrativos. El catálogo publicado consulta los precios actuales de `public.products`; las solicitudes confirmadas se guardan en `public.contact_messages`.
 
 En Supabase Cloud también debe estar habilitado **Authentication → Sign In / Providers → Anonymous Sign-Ins** para que funcione el carrito sin registro. La configuración de `supabase/config.toml` solo afecta el entorno local.
 
 Después, sube cambios a `main` o ejecuta manualmente **Deploy to GitHub Pages** desde Actions y comprueba que el workflow finalice correctamente antes de compartir el sitio.
 
-El workflow usa el token de GitHub Actions con permisos de Pages; el único secreto adicional requerido es la clave publishable de Supabase indicada arriba.
+El workflow usa el token de GitHub Actions con permisos de Pages y compila al subir cambios a `main` o al ejecutarlo manualmente.

@@ -36,7 +36,7 @@ jobs:
       - name: Build
         env:
           VITE_SUPABASE_URL: https://vxmjsgbpfmofbcpetgjd.supabase.co
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_6UXinSjJvtv2GrDPcxjGWQ_coi53JU5'
         run: |
           if [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then
             echo "::error::Add the VITE_SUPABASE_PUBLISHABLE_KEY Actions secret before deploying the Supabase-connected site."
