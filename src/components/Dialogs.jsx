@@ -22,6 +22,7 @@ export function CartDialog({
       {cartStatus === 'loading' && <p className="catalog-connection" role="status">Conectando con tu carrito de Supabase…</p>}
       {cartStatus === 'saving' && <p className="catalog-connection" role="status">Guardando cambios del carrito en Supabase…</p>}
       {cartStatus === 'ready' && <p className="catalog-connection" role="status">Carrito sincronizado con Supabase.</p>}
+      {cartStatus === 'local' && <p className="catalog-connection" role="status">Carrito guardado en este dispositivo.</p>}
       {cartStatus === 'error' && (
         <div className="catalog-error" role="alert">
           <p>{cartError}</p>

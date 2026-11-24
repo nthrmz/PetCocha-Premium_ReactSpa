@@ -349,6 +349,19 @@ function App() {
     let active = true
 
     const loadUserCart = async () => {
+      if (!isSupabaseConfigured) {
+        const localItems = resolveCartItems(savedCart.cart).map(({ id, qty, ...product }) => ({
+          id,
+          qty,
+          product,
+        }))
+        cartIdRef.current = 'local'
+        cartRef.current = localItems
+        setCart(localItems)
+        setCartResult({ key: cartRequestKey, status: 'local', cartId: 'local', error: '' })
+        return
+      }
+
       try {
         const user = await getAuthenticatedUser()
 
@@ -430,9 +443,12 @@ function App() {
       setCartMutationStatus('saving')
       setCartMutationError('')
       const nextCart = await mutate(cartRef.current, remoteCartId)
+      if (remoteCartId === 'local') {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(nextCart.map(({ id, qty }) => ({ id, qty }))))
+      }
       cartRef.current = nextCart
       setCart(nextCart)
-      setCartMutationStatus('ready')
+      setCartMutationStatus(remoteCartId === 'local' ? 'local' : 'ready')
       return true
     })
 
@@ -450,6 +466,10 @@ function App() {
     await cartWriteQueue.current
     const remoteCartId = cartIdRef.current
     if (!remoteCartId) return false
+    if (remoteCartId === 'local') {
+      setCart([...cartRef.current])
+      return true
+    }
 
     setCartMutationStatus('saving')
     setCartMutationError('')
@@ -503,6 +523,15 @@ function App() {
         return current
       }
 
+      if (remoteCartId === 'local') {
+        const product = localProducts.find((item) => item.id === id)
+        if (!product) return current
+        showToast('Producto aÃ±adido al carrito de este dispositivo')
+        return existing
+          ? current.map((item) => item.id === id ? { ...item, qty: item.qty + 1 } : item)
+          : [...current, { id, qty: 1, product }]
+      }
+
       const { data, error } = await supabase
         .from('cart_items')
         .upsert(
@@ -529,6 +558,7 @@ function App() {
       const quantity = Math.min(99, existing.qty + delta)
       if (quantity === existing.qty) return current
       if (quantity === 0) {
+        if (remoteCartId === 'local') return current.filter((item) => item.id !== id)
         const { error } = await supabase
           .from('cart_items')
           .delete()
@@ -536,6 +566,10 @@ function App() {
           .eq('product_id', id)
         if (error) throw error
         return current.filter((item) => item.id !== id)
+      }
+
+      if (remoteCartId === 'local') {
+        return current.map((item) => item.id === id ? { ...item, qty: quantity } : item)
       }
 
       const { data, error } = await supabase
@@ -553,6 +587,7 @@ function App() {
   }
 
   const removeFromCart = (id) => enqueueCartMutation(async (current, remoteCartId) => {
+    if (remoteCartId === 'local') return current.filter((item) => item.id !== id)
     const { error } = await supabase
       .from('cart_items')
       .delete()
@@ -564,6 +599,10 @@ function App() {
 
   const clearCart = () => enqueueCartMutation(async (current, remoteCartId) => {
     if (!current.length) return current
+    if (remoteCartId === 'local') {
+      showToast('Carrito vacÃ­o; cambios guardados en este dispositivo.')
+      return []
+    }
     const { error } = await supabase
       .from('cart_items')
       .delete()
