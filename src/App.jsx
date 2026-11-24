@@ -21,7 +21,8 @@ import {
   restoreSavedCart,
   shouldImportLegacyCart,
 } from './lib/cart.js'
-import { supabase } from './lib/supabase.js'
+import { isSupabaseConfigured, supabase } from './lib/supabase.js'
+import { products as localProducts } from './data/products.js'
 import './petcocha.css'
 
 const CART_STORAGE_KEY = 'petcocha-premium-cart-v1'
@@ -32,6 +33,7 @@ const EMPTY_PRODUCTS = []
 let anonymousSignInPromise
 
 async function getAuthenticatedUser() {
+  if (!supabase) throw new Error('Configura Supabase para habilitar el carrito sincronizado.')
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
   if (sessionError) throw sessionError
   if (sessionData.session?.user) return sessionData.session.user
@@ -238,6 +240,11 @@ function App() {
     let active = true
 
     const loadCatalog = async () => {
+      if (!isSupabaseConfigured) {
+        setCatalogResult({ key: catalogRequestKey, status: 'local', products: localProducts, error: '' })
+        return
+      }
+
       try {
         const { data, error } = await supabase
           .from('products')
@@ -628,6 +635,7 @@ function App() {
     setContactSubmitting(true)
     setContactSubmitError('')
     try {
+      if (!supabase) throw new Error('Configura Supabase para enviar consultas desde la página publicada.')
       const { error } = await supabase
         .from('contact_messages')
         .insert({
